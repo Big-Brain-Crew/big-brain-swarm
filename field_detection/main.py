@@ -90,109 +90,75 @@ def four_point_transform(image, pts):
 	return warped
 
 
+def find_field_frame(frame):
+    ret = 0
+    
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    # Find the colors within the boundaries and mask
+    # mask = cv2.inRange(frame, brown_min_bgr, brown_max_bgr)
+    boundary_mask = cv2.inRange(hsv, blue_min_hsv, blue_max_hsv)
+
+    # Create kernels for dilution and erosion operations; larger ksize means larger pixel neighborhood where the
+    # operation is taking place
+    se1 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(20, 20))
+
+    # Perform "closing." This is dilution followed by erosion, which fills in black gaps within the marker. This is
+    # necessary if the lightness threshold is not able to get the entire marker at lower altitudes
+    processed_frame = cv2.morphologyEx(boundary_mask, cv2.MORPH_CLOSE, se1)
+
+    # Find contours
+    contours, _ = cv2.findContours(processed_frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+    # Find corners of the contour
+    field = np.zeros(shape=frame.shape)
+    if len(contours) >= 1:
+
+        # Take contour w/ max area; the marker will always be the largest contour in the image
+        c = max(contours, key=cv2.contourArea)
+
+        # Approximate the contour
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.03 * peri, True)
+
+        if is_rectangle(approx):
+
+            corners = cv2.goodFeaturesToTrack(processed_frame, maxCorners=4, qualityLevel=0.5, minDistance=150).squeeze()
+
+            if len(corners) == 4:
+                try:
+                    for corner in corners:
+                        x,y = corner.ravel()
+                        cv2.circle(processed_frame,(int(x),int(y)),8,(255, 255, 255),-1)
+                    
+                    field = four_point_transform(frame, corners)                
+                    
+                    # Success
+                    ret = 1
+                except:
+                    print("Couldn't find field - corners are invalid")
+
+            else:
+                print(f"Only {len(corners)} corners found")
+    
+    return ret, field
+                                
+
 def main():
 
     cap = cv2.VideoCapture(2)
 
     while True:
         _, frame = cap.read()
-
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-        ## Detect Boundaries ##
-
-        # Find the colors within the boundaries and mask
-        # mask = cv2.inRange(frame, brown_min_bgr, brown_max_bgr)
-        boundary_mask = cv2.inRange(hsv, blue_min_hsv, blue_max_hsv)
-        bgr_mask = cv2.cvtColor(boundary_mask, cv2.COLOR_GRAY2BGR)
-
-        # Create kernels for dilution and erosion operations; larger ksize means larger pixel neighborhood where the
-        # operation is taking place
-        se1 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(20, 20))
-
-        # Perform "closing." This is dilution followed by erosion, which fills in black gaps within the marker. This is
-        # necessary if the lightness threshold is not able to get the entire marker at lower altitudes
-        processed_frame = cv2.morphologyEx(boundary_mask, cv2.MORPH_CLOSE, se1)
-
-        # Find contours
-        contours, _ = cv2.findContours(processed_frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-        # Find corners of the contour
-        field = np.zeros(shape=frame.shape)
-        inverted_frame = np.zeros(shape=frame.shape)
-        filled_in_border = np.zeros(shape=frame.shape)
-        boundary_viz = np.zeros(shape=frame.shape)
-        if len(contours) >= 1:
-
-            # Take contour w/ max area; the marker will always be the largest contour in the image
-            c = max(contours, key=cv2.contourArea)
-
-            # Approximate the contour
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.03 * peri, True)
-
-            if is_rectangle(approx):
-
-                # rect = cv2.minAreaRect(approx)
-                # box = cv2.boxPoints(rect)
-                # box = np.int0(box)
-                # filled_in_border = processed_frame.copy()
-                # cv2.fillPoly(filled_in_border, [box], (255,255,255))
-                
-                corners = cv2.goodFeaturesToTrack(processed_frame, maxCorners=4, qualityLevel=0.5, minDistance=150).squeeze()
-                print(len(corners))
-                for corner in corners:
-                    x,y = corner.ravel()
-                    cv2.circle(processed_frame,(int(x),int(y)),8,(255, 255, 255),-1)
-                
-                field = four_point_transform(frame, corners)                
-                                
-                # y_corners = [int(p[0]) for p in corners]
-                # x_corners = [int(p[1]) for p in corners]
-                # y_min, y_max, x_min, x_max = np.min(y_corners), np.max(y_corners), np.min(x_corners), np.max(x_corners)
-
-                # # Invert
-                # inverted_frame = cv2.bitwise_not(processed_frame[x_min:x_max, y_min:y_max])
-
-                # # Find contours
-                # contours, _ = cv2.findContours(inverted_frame, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-                
-                # if len(contours) >= 1:
-
-                #     # Take contour w/ max area; the marker will always be the largest contour in the image
-                #     c = max(contours, key=cv2.contourArea)
-
-                #     # Approximate the contour
-                #     peri = cv2.arcLength(c, True)
-                #     approx = cv2.approxPolyDP(c, 0.03 * peri, True)
-
-                #     if is_rectangle(approx):
-                #         c = approx                
-
-                #         rect = cv2.minAreaRect(c)
-                #         box = cv2.boxPoints(rect)
-                #         corners = np.int0(box)
-
-                #         y_corners = [int(p[0]) for p in corners]
-                #         x_corners = [int(p[1]) for p in corners]
-                #         y_min, y_max, x_min, x_max = np.min(y_corners), np.max(y_corners), np.min(x_corners), np.max(x_corners)                        
-                #         inverted_frame = inverted_frame[x_min:x_max, y_min:y_max]
-
-                        # corners = cv2.goodFeaturesToTrack(inverted_frame, maxCorners=4, qualityLevel=0.5, minDistance=150).squeeze()
-                        # for corner in corners:
-                        #     x,y = corner.ravel()
-                        #     cv2.circle(inverted_frame,(int(x),int(y)),8,(255,120,255),-1)
-                
-                        # field = four_point_transform(frame, corners)
-
-                        # boundary_viz = visualize_boundary(frame[x_min:x_max, y_min:y_max], corners, c)
-
         
-        cv2.imshow("Original Image", np.hstack([frame, bgr_mask]))
-        cv2.imshow("Field", field)
-        cv2.imshow("Field Detection", processed_frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+
+        ret, field = find_field_frame(frame)
+        
+        if ret:
+            cv2.imshow("Original Image", frame)
+            cv2.imshow("Field", field)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
 
     cap.release()
     cv2.destroyAllWindows()
