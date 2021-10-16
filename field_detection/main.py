@@ -97,7 +97,7 @@ def find_field_frame(frame):
 
     # Find the colors within the boundaries and mask
     # mask = cv2.inRange(frame, brown_min_bgr, brown_max_bgr)
-    boundary_mask = cv2.inRange(hsv, blue_min_hsv, blue_max_hsv)
+    border_mask = cv2.inRange(hsv, blue_min_hsv, blue_max_hsv)
 
     # Create kernels for dilution and erosion operations; larger ksize means larger pixel neighborhood where the
     # operation is taking place
@@ -105,7 +105,7 @@ def find_field_frame(frame):
 
     # Perform "closing." This is dilution followed by erosion, which fills in black gaps within the marker. This is
     # necessary if the lightness threshold is not able to get the entire marker at lower altitudes
-    processed_frame = cv2.morphologyEx(boundary_mask, cv2.MORPH_CLOSE, se1)
+    processed_frame = cv2.morphologyEx(border_mask, cv2.MORPH_CLOSE, se1)
 
     # Find contours
     contours, _ = cv2.findContours(processed_frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -122,7 +122,8 @@ def find_field_frame(frame):
         approx = cv2.approxPolyDP(c, 0.03 * peri, True)
 
         if is_rectangle(approx):
-
+            
+            # Find the corners of the field
             corners = cv2.goodFeaturesToTrack(processed_frame, maxCorners=4, qualityLevel=0.5, minDistance=150).squeeze()
 
             if len(corners) == 4:
@@ -131,6 +132,7 @@ def find_field_frame(frame):
                         x,y = corner.ravel()
                         cv2.circle(processed_frame,(int(x),int(y)),8,(255, 255, 255),-1)
                     
+                    # Perspective transform field to be top-down
                     field = four_point_transform(frame, corners)                
                     
                     # Success
