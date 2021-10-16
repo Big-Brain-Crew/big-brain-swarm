@@ -19,7 +19,7 @@ bot_color_ranges = {
 
 class LowPassFilter:
     def __init__(self, current_scale=0.5):
-        self.previous_value_ = 0
+        self.previous_value_ = None
         self.current_scale_ = current_scale
         self.first = True
 
@@ -35,6 +35,7 @@ class LowPassFilter:
 
 
 corner_lpf = LowPassFilter(0.1)
+swarm_position_lpf = LowPassFilter(0.1)
 
 
 def is_rectangle(approx):
@@ -286,9 +287,10 @@ def find_swarm_position(f, swarm):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     for bot in swarm:
+        bot_position = None
         if bot in bot_color_ranges:
             ranges = bot_color_ranges[bot]
-            
+
             full_mask = np.zeros(shape=(hsv.shape[0], hsv.shape[1]), dtype=np.uint8)
             for range in ranges:
                 full_mask += cv2.inRange(hsv, range[0], range[1])
@@ -302,7 +304,7 @@ def find_swarm_position(f, swarm):
             # Dilution followed by erosion, which fills in black gaps.
             full_mask = cv2.morphologyEx(full_mask, cv2.MORPH_CLOSE, se2)
 
-            if debug: 
+            if debug:
                 debug_mask += full_mask
 
             # Find contours
@@ -331,13 +333,16 @@ def find_swarm_position(f, swarm):
                         # Find orientation relative to top left of field (0,0)
                         theta, p_front, p_short_line_middle = find_contour_orientation(c)
 
-                        swarm_position.append([c_x, c_y, theta])
+                        bot_position = np.array([int(c_x), int(c_y), int(theta)])
+
                         ret = 1
                         if debug:
                             contours_to_draw.append(c)
                             points_to_draw.append(p_front)
                             points_to_draw.append(p_short_line_middle)
                             points_to_draw.append([c_x, c_y])
+
+        swarm_position.append(bot_position)
 
     if debug:
         debug_mask_bgr = cv2.cvtColor(debug_mask, cv2.COLOR_GRAY2BGR)
@@ -383,6 +388,10 @@ def add_obstacles_to_occupancy_grid(occupancy_grid, obstacles):
 
 
 def main():
+    swarm = ["green", "red"]
+    swarm_position = [None] * len(swarm)
+    swarm_position_lpfs = []
+    [swarm_position_lpfs.append(LowPassFilter(0.1)) for p in swarm_position]
 
     cap = cv2.VideoCapture(2)
 
@@ -398,7 +407,12 @@ def main():
             # Create empty occupancy grid
             occupancy_grid = np.zeros(shape=(field.shape[0], field.shape[1]), dtype=np.uint8)
 
-            swarm_position = find_swarm_position(field, swarm=["green", "red"])
+            new_swarm_position = find_swarm_position(field, swarm=swarm)
+            for i, bot_position in enumerate(new_swarm_position):
+                if bot_position is not None:
+                    swarm_position[i] = swarm_position_lpfs[i].update(bot_position).astype(int)
+
+            print(swarm_position)
 
             # obstacles, obstacle_mask_viz = find_obstacles(field)
             # occupancy_grid = add_obstacles_to_occupancy_grid(occupancy_grid, obstacles)
@@ -408,7 +422,11 @@ def main():
         if debug and ret:
             frame_resized = cv2.resize(frame, (1080, 720), interpolation=cv2.INTER_AREA)
             occupancy_grid_bgr = cv2.cvtColor(occupancy_grid, cv2.COLOR_GRAY2BGR)
-            # cv2.imshow("Original Image", np.hstack([frame_resized, field]))
+            for point in swarm_position:
+                if point is not None:    
+                    cv2.circle(field, point[:2], 4, (0, 0, 255), -1)
+
+            cv2.imshow("Original, Field", np.hstack([frame_resized, field]))
             # cv2.imshow("Occupancy Grid", occupancy_grid_bgr)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
