@@ -359,9 +359,26 @@ def find_swarm_position(f, swarm):
     return swarm_position
 
 
-def find_obstacles(f):
+def create_swarm_bounding_boxes_mask(swarm_position, grid_shape):
+    grid = np.zeros(shape=grid_shape, dtype=np.uint8)
+    half_width = 50
+    half_height = 50
+
+    for bot_position in swarm_position:
+        if bot_position is not None:
+            bot_x_min = bot_position[0] - half_width
+            bot_x_max = bot_position[0] + half_width
+            bot_y_min = bot_position[1] - half_height
+            bot_y_max = bot_position[1] + half_height
+
+            grid[bot_y_min:bot_y_max, bot_x_min:bot_x_max] = 255
+
+    return grid
+
+
+def create_obstacles_mask(f, mask=None):
     """
-    Obstacles are considered to be gray-black objects placed in the field.
+    Obstacles are considered to be gray/black objects placed in the field.
 
     Return mask of obstacles (w/ dilation) and mask of original obstacles
     """
@@ -370,6 +387,9 @@ def find_obstacles(f):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     _, thresh = cv2.threshold(blurred, 60, 255, cv2.THRESH_BINARY_INV)
+
+    if mask is not None:
+        thresh[mask == 255] = 0
 
     # Add some thickness to each obstacle - this will help bots avoid clipping corners
     kernel = np.ones((20, 20), np.uint8)
@@ -382,9 +402,11 @@ def find_obstacles(f):
     return dilated, thresh
 
 
-def add_obstacles_to_occupancy_grid(occupancy_grid, obstacles):
-    updated_grid = cv2.bitwise_or(occupancy_grid, obstacles)
-    return updated_grid
+def create_occupancy_grid(obstacles_mask, swarm_bounding_boxes_mask):
+    occupancy_grid = np.zeros(shape=obstacles_mask.shape, dtype=np.uint8)
+    occupancy_grid[obstacles_mask == 255] = 1
+    occupancy_grid[swarm_bounding_boxes_mask == 255] = 2
+    return occupancy_grid
 
 
 def main():
@@ -393,6 +415,15 @@ def main():
     swarm_position_lpfs = []
     [swarm_position_lpfs.append(LowPassFilter(0.1)) for p in swarm_position]
 
+    # Occupancy Grid
+    # 0: Free space
+    # 1: Obstacles
+    # 2: Swarm bots
+    occupancy_grid_width = 1080
+    occupancy_grid_height = 720
+    occupancy_grid = np.zeros(shape=(occupancy_grid_height, occupancy_grid_width), dtype=np.uint8)
+    occupancy_grid_lpf = LowPassFilter(0.1)
+
     cap = cv2.VideoCapture(2)
 
     while True:
@@ -400,34 +431,51 @@ def main():
 
         ret, field = find_field_frame(frame)
 
-        # Scale field to 720p
         if ret:
-            field = cv2.resize(field, (1080, 720), interpolation=cv2.INTER_AREA)
+            field = cv2.resize(
+                field,
+                (occupancy_grid.shape[1], occupancy_grid.shape[0]),
+                interpolation=cv2.INTER_AREA,
+            )
 
-            # Create empty occupancy grid
-            occupancy_grid = np.zeros(shape=(field.shape[0], field.shape[1]), dtype=np.uint8)
-
+            # Locate the swarm bots in the field
             new_swarm_position = find_swarm_position(field, swarm=swarm)
             for i, bot_position in enumerate(new_swarm_position):
                 if bot_position is not None:
                     swarm_position[i] = swarm_position_lpfs[i].update(bot_position).astype(int)
 
-            print(swarm_position)
+            # Create bounding boxes for each bot to add to occupancy grid
+            swarm_bounding_boxes_mask = create_swarm_bounding_boxes_mask(
+                swarm_position, occupancy_grid.shape
+            )
 
-            # obstacles, obstacle_mask_viz = find_obstacles(field)
-            # occupancy_grid = add_obstacles_to_occupancy_grid(occupancy_grid, obstacles)
+            obstacles_mask, obstacle_mask_viz = create_obstacles_mask(
+                field, swarm_bounding_boxes_mask
+            )
 
-            # return occupancy_grid
+            occupancy_grid = create_occupancy_grid(obstacles_mask, swarm_bounding_boxes_mask)
 
         if debug and ret:
-            frame_resized = cv2.resize(frame, (1080, 720), interpolation=cv2.INTER_AREA)
+            frame_resized = cv2.resize(
+                frame,
+                (occupancy_grid.shape[1], occupancy_grid.shape[0]),
+                interpolation=cv2.INTER_AREA,
+            )
+
+            obstacles_mask_bgr = cv2.cvtColor(obstacles_mask, cv2.COLOR_GRAY2BGR)
+            bbox_grid_bgr = cv2.cvtColor(swarm_bounding_boxes_mask, cv2.COLOR_GRAY2BGR)
+
             occupancy_grid_bgr = cv2.cvtColor(occupancy_grid, cv2.COLOR_GRAY2BGR)
+            occupancy_grid_bgr[occupancy_grid == 1] = [0, 0, 255]
+            occupancy_grid_bgr[occupancy_grid == 2] = [255, 0, 0]
             for point in swarm_position:
-                if point is not None:    
+                if point is not None:
                     cv2.circle(field, point[:2], 4, (0, 0, 255), -1)
 
             cv2.imshow("Original, Field", np.hstack([frame_resized, field]))
-            # cv2.imshow("Occupancy Grid", occupancy_grid_bgr)
+            cv2.imshow(
+                "Occupancy Grid", np.hstack([bbox_grid_bgr, obstacles_mask_bgr, occupancy_grid_bgr])
+            )
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
