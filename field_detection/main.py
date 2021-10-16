@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import pdb
 
 debug = True
 
@@ -7,10 +8,45 @@ debug = True
 blue_min_hsv = np.array([95, 160, 60], dtype=np.uint8)
 blue_max_hsv = np.array([125, 255, 255], dtype=np.uint8)
 
-# Checks if the contour approximation is a rectangle.
+# lower boundary RED color range values; Hue (0 - 10)
+# red_min_hsv_1 = np.array([0, 100, 20])
+# red_max_hsv_1 = np.array([10, 255, 255])
+
+# upper boundary RED color range values; Hue (160 - 180)
+# red_min_hsv_2 = np.array([160,100,20])
+# red_max_hsv_2 = np.array([179,255,255])
+
+red_min_hsv_1 = np.array([0, 80, 180])
+red_max_hsv_1 = np.array([10, 255, 255])
+
+# upper boundary RED color range values; Hue (160 - 180)
+red_min_hsv_2 = np.array([160, 80, 180])
+red_max_hsv_2 = np.array([179, 255, 255])
+
+
+class LowPassFilter:
+    def __init__(self, current_scale=0.5):
+        self.previous_value_ = 0
+        self.current_scale_ = current_scale
+        self.first = True
+
+    def update(self, value):
+        if self.first:
+            self.previous_value_ = value
+            self.first = False
+        else:
+            self.previous_value_ = (
+                self.previous_value_ * (1 - self.current_scale_) + value * self.current_scale_
+            )
+        return self.previous_value_
+
+
+corner_lpf = LowPassFilter(0.1)
+
+
 def is_rectangle(approx):
 
-    # print(len(approx))
+    # print(len(approx))p
     if len(approx) == 4:
 
         # compute the bounding box of the contour and use the
@@ -20,6 +56,14 @@ def is_rectangle(approx):
 
         # a rectangle will have an aspect ratio that is within this range
         return True if 0.6 <= ar <= 2.0 else False
+    return False
+
+
+def is_triangle(approx):
+
+    if len(approx) == 3:
+        return True
+
     return False
 
 
@@ -37,45 +81,47 @@ def visualize_boundary(frame, corners, c):
 
 
 def order_points(pts):
-    # initialzie a list of coordinates that will be ordered
+
+    # Initialize a list of coordinates that will be ordered
     # such that the first entry in the list is the top-left,
     # the second entry is the top-right, the third is the
     # bottom-right, and the fourth is the bottom-left
     rect = np.zeros((4, 2), dtype="float32")
-    # the top-left point will have the smallest sum, whereas
+
+    # The top-left point will have the smallest sum, whereas
     # the bottom-right point will have the largest sum
     s = pts.sum(axis=1)
-    #   pdb;pdb.set_trace()
     rect[0] = pts[np.argmin(s)]
     rect[2] = pts[np.argmax(s)]
-    # now, compute the difference between the points, the
+
+    # Compute the difference between the points, the
     # top-right point will have the smallest difference,
     # whereas the bottom-left will have the largest difference
     diff = np.diff(pts, axis=1)
     rect[1] = pts[np.argmin(diff)]
     rect[3] = pts[np.argmax(diff)]
-    # return the ordered coordinates
+
     return rect
 
 
-def four_point_transform(image, pts):
-    # obtain a consistent order of the points and unpack them
-    # individually
-    rect = order_points(pts)
+def four_point_transform(image, rect):
     (tl, tr, br, bl) = rect
-    # compute the width of the new image, which will be the
+
+    # Compute the width of the new image, which will be the
     # maximum distance between bottom-right and bottom-left
     # x-coordiates or the top-right and top-left x-coordinates
     widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
     widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
     maxWidth = max(int(widthA), int(widthB))
-    # compute the height of the new image, which will be the
+
+    # Compute the height of the new image, which will be the
     # maximum distance between the top-right and bottom-right
     # y-coordinates or the top-left and bottom-left y-coordinates
     heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
     heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
     maxHeight = max(int(heightA), int(heightB))
-    # now that we have the dimensions of the new image, construct
+
+    # Now that we have the dimensions of the new image, construct
     # the set of destination points to obtain a "birds eye view",
     # (i.e. top-down view) of the image, again specifying points
     # in the top-left, top-right, bottom-right, and bottom-left
@@ -84,10 +130,11 @@ def four_point_transform(image, pts):
         [[0, 0], [maxWidth - 1, 0], [maxWidth - 1, maxHeight - 1], [0, maxHeight - 1]],
         dtype="float32",
     )
-    # compute the perspective transform matrix and then apply it
+
+    # Compute the perspective transform matrix and then apply it
     M = cv2.getPerspectiveTransform(rect, dst)
     warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
-    # return the warped image
+
     return warped
 
 
@@ -103,10 +150,14 @@ def find_field_frame(frame):
 
     # Create kernels for dilution and erosion operations; larger ksize means larger pixel neighborhood where the
     # operation is taking place
-    se1 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(20, 20))
+    se1 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(5, 5))
+    se2 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(50, 50))  # used to be 25
 
-    # Perform "closing." This is dilution followed by erosion, which fills in black gaps within the marker.
-    processed_frame = cv2.morphologyEx(border_mask, cv2.MORPH_CLOSE, se1)
+    # Erosion followed by dilation, for rremoving noise
+    # opening_frame = cv2.morphologyEx(border_mask, cv2.MORPH_OPEN, se1)
+
+    # Dilution followed by erosion, which fills in black gaps.
+    processed_frame = cv2.morphologyEx(border_mask, cv2.MORPH_CLOSE, se2)
 
     # Find contours
     contours, _ = cv2.findContours(processed_frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -130,6 +181,12 @@ def find_field_frame(frame):
             if len(corners) == 4:
                 try:
 
+                    # Order the points for the LPF and perspective transform
+                    corners = order_points(corners)
+
+                    # Stabilize corners from noise
+                    corners = corner_lpf.update(corners)
+
                     # Perspective transform field to be top-down
                     field = four_point_transform(frame, corners)
 
@@ -140,9 +197,11 @@ def find_field_frame(frame):
 
             else:
                 print(f"Only {len(corners)} corners found")
+                pass
 
     if debug:
         border_mask_bgr = cv2.cvtColor(border_mask, cv2.COLOR_GRAY2BGR)
+        # opening_frame_bgr = cv2.cvtColor(opening_frame, cv2.COLOR_GRAY2BGR)
         processed_frame_bgr = cv2.cvtColor(processed_frame, cv2.COLOR_GRAY2BGR)
         if ret:
             for corner in corners:
@@ -156,6 +215,161 @@ def find_field_frame(frame):
     return ret, field
 
 
+bot_contour_area = 340
+bot_contour_area_tolerance = 40
+def find_contour_with_most_similar_area(contours):
+    most_similar_c = None
+    most_similar_area = -1000
+    for c in contours:
+        area = cv2.contourArea(c)
+        # print("AREA", area)
+        # print(area > bot_contour_area - bot_contour_area_tolerance)
+        # print(area < bot_contour_area + bot_contour_area_tolerance)
+        # print(abs(area- bot_contour_area))
+        if (
+            area > bot_contour_area - bot_contour_area_tolerance
+            and area < bot_contour_area + bot_contour_area_tolerance
+            and abs(area - bot_contour_area) < abs(most_similar_area - bot_contour_area)
+        ):
+            most_similar_area = area
+            most_similar_c = c
+
+    return most_similar_c
+
+
+# Assumes a triangle contour
+def find_contour_orientation(contour):
+    p1, p2, p3 = contour[0].squeeze(), contour[1].squeeze(), contour[2].squeeze()
+
+    p1_distances = [
+        np.sqrt(np.square(p1[0] - p2[0]) + np.square(p1[1] - p2[1])),
+        np.sqrt(np.square(p1[0] - p3[0]) + np.square(p1[1] - p3[1])),
+    ]
+    p2_distances = [
+        np.sqrt(np.square(p2[0] - p1[0]) + np.square(p2[1] - p1[1])),
+        np.sqrt(np.square(p2[0] - p3[0]) + np.square(p2[1] - p3[1])),
+    ]
+    p3_distances = [
+        np.sqrt(np.square(p3[0] - p1[0]) + np.square(p3[1] - p1[1])),
+        np.sqrt(np.square(p3[0] - p2[0]) + np.square(p3[1] - p2[1])),
+    ]
+
+    sums = [sum(p1_distances), sum(p2_distances), sum(p3_distances)]
+    p_front_idx = sums.index(max(sums))
+    p_front = contour[p_front_idx].squeeze()
+    back_points = np.delete(contour, p_front_idx, 0).squeeze()
+
+    p_short_line_middle = np.array([
+        np.average([back_points[0][0], back_points[1][0]]),
+        np.average([back_points[0][1], back_points[1][1]]),
+    ]).astype(int)
+
+    theta = np.arctan2(p_front[1] - p_short_line_middle[1], p_front[0] - p_short_line_middle[0]) * (180.0 / np.pi)
+
+    return theta, p_front, p_short_line_middle
+
+
+def find_swarm_position(f):
+    frame = f.copy()
+    swarm_position = []
+
+    # Debug values
+    ret = 0
+    contours_to_draw = []
+    points_to_draw = []
+
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    lower_mask = cv2.inRange(hsv, red_min_hsv_1, red_max_hsv_1)
+    upper_mask = cv2.inRange(hsv, red_min_hsv_2, red_max_hsv_2)
+    full_mask = lower_mask + upper_mask
+
+    se1 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(5, 5))
+    se2 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(3, 3))
+
+    # Erosion followed by dilation, for rremoving noise
+    full_mask = cv2.morphologyEx(full_mask, cv2.MORPH_OPEN, se1)
+
+    # Dilution followed by erosion, which fills in black gaps.
+    full_mask = cv2.morphologyEx(full_mask, cv2.MORPH_CLOSE, se2)
+
+    # Find contours
+    contours, _ = cv2.findContours(full_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if len(contours) >= 1:
+        c = contours[0]
+
+        # Choose contour with area closest to calibrated area
+        bot_candidate = find_contour_with_most_similar_area(contours)
+
+        if bot_candidate is not None:
+
+            # Approximate the contour
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.1 * peri, True)
+
+            if is_triangle(approx):
+                c = approx
+                
+                # Find position of bot center
+                M = cv2.moments(c)
+                c_x = int(M["m10"] / M["m00"])
+                c_y = int(M["m01"] / M["m00"])
+                
+                # Find orientation relative to top left of field (0,0)
+                theta, p_front, p_short_line_middle = find_contour_orientation(c)
+
+                swarm_position.append([c_x, c_y, theta])
+                ret = 1
+                if debug:
+                    contours_to_draw.append(c)
+                    points_to_draw.append(p_front)
+                    points_to_draw.append(p_short_line_middle)
+                    points_to_draw.append([c_x, c_y])
+                
+
+    if debug:
+        full_mask_bgr = cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)
+
+        if ret:
+            for c in contours_to_draw:
+                cv2.drawContours(full_mask_bgr, [c], 0, (0, 255, 0), 3)
+            for p in points_to_draw:
+                cv2.circle(full_mask_bgr, p, 4, (0, 0, 255), -1)
+
+        cv2.imshow("Swarm Detection", np.hstack([frame, hsv, full_mask_bgr]))
+        cv2.waitKey(1)
+
+    return swarm_position
+
+
+def find_obstacles(f):
+    """
+    Obstacles are considered to be gray-black objects placed in the field.
+
+    Return mask of obstacles (w/ dilation) and mask of original obstacles
+    """
+
+    frame = f.copy()
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thresh = cv2.threshold(blurred, 60, 255, cv2.THRESH_BINARY_INV)
+
+    # Add some thickness to each obstacle - this will help bots avoid clipping corners
+    kernel = np.ones((20, 20), np.uint8)
+    dilated = cv2.dilate(thresh, kernel, iterations=1)
+
+    if debug:
+        cv2.imshow("Obstacle Detection", np.hstack([gray, blurred, thresh, dilated]))
+        cv2.waitKey(1)
+
+    return dilated, thresh
+
+
+def add_obstacles_to_occupancy_grid(occupancy_grid, obstacles):
+    updated_grid = cv2.bitwise_or(occupancy_grid, obstacles)
+    return updated_grid
+
+
 def main():
 
     cap = cv2.VideoCapture(2)
@@ -166,22 +380,24 @@ def main():
         ret, field = find_field_frame(frame)
 
         # Scale field to 720p
-        field = cv2.resize(field, (1080, 720), interpolation=cv2.INTER_AREA)
+        if ret:
+            field = cv2.resize(field, (1080, 720), interpolation=cv2.INTER_AREA)
 
-        # Create empty occupancy grid
-        occupancy_grid = np.zeros(shape=field.shape)
+            # Create empty occupancy grid
+            occupancy_grid = np.zeros(shape=(field.shape[0], field.shape[1]), dtype=np.uint8)
 
-        # obstacles = find_obstacles(field)
-        # occupancy_grid = add_obstacles_to_occupancy_grid(occupancy_grid)
+            swarm_position = find_swarm_position(field)
 
-        # swarm_position = find_swarm_position(field)
+            obstacles, obstacle_mask_viz = find_obstacles(field)
+            occupancy_grid = add_obstacles_to_occupancy_grid(occupancy_grid, obstacles)
 
-        # return occupancy_grid
+            # return occupancy_grid
 
         if debug and ret:
             frame_resized = cv2.resize(frame, (1080, 720), interpolation=cv2.INTER_AREA)
-            cv2.imshow("Original Image", np.hstack([frame_resized, field]))
-            # cv2.imshow("Field", field)
+            occupancy_grid_bgr = cv2.cvtColor(occupancy_grid, cv2.COLOR_GRAY2BGR)
+            # cv2.imshow("Original Image", np.hstack([frame_resized, field]))
+            # cv2.imshow("Occupancy Grid", occupancy_grid_bgr)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
