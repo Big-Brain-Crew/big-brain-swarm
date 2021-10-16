@@ -8,20 +8,13 @@ debug = True
 blue_min_hsv = np.array([95, 160, 60], dtype=np.uint8)
 blue_max_hsv = np.array([125, 255, 255], dtype=np.uint8)
 
-# lower boundary RED color range values; Hue (0 - 10)
-# red_min_hsv_1 = np.array([0, 100, 20])
-# red_max_hsv_1 = np.array([10, 255, 255])
-
-# upper boundary RED color range values; Hue (160 - 180)
-# red_min_hsv_2 = np.array([160,100,20])
-# red_max_hsv_2 = np.array([179,255,255])
-
-red_min_hsv_1 = np.array([0, 80, 180])
-red_max_hsv_1 = np.array([10, 255, 255])
-
-# upper boundary RED color range values; Hue (160 - 180)
-red_min_hsv_2 = np.array([160, 80, 180])
-red_max_hsv_2 = np.array([179, 255, 255])
+bot_color_ranges = {
+    "red": [
+        [np.array([0, 80, 180]), np.array([10, 255, 255])],
+        [np.array([160, 80, 180]), np.array([179, 255, 255])],
+    ],
+    "green": [[np.array([34, 100, 120]), np.array([80, 255, 255])]],
+}
 
 
 class LowPassFilter:
@@ -215,14 +208,16 @@ def find_field_frame(frame):
     return ret, field
 
 
-bot_contour_area = 340
+bot_contour_area = 1200
 bot_contour_area_tolerance = 40
+
+
 def find_contour_with_most_similar_area(contours):
     most_similar_c = None
     most_similar_area = -1000
     for c in contours:
         area = cv2.contourArea(c)
-        # print("AREA", area)
+        print("AREA", area)
         # print(area > bot_contour_area - bot_contour_area_tolerance)
         # print(area < bot_contour_area + bot_contour_area_tolerance)
         # print(abs(area- bot_contour_area))
@@ -259,84 +254,101 @@ def find_contour_orientation(contour):
     p_front = contour[p_front_idx].squeeze()
     back_points = np.delete(contour, p_front_idx, 0).squeeze()
 
-    p_short_line_middle = np.array([
-        np.average([back_points[0][0], back_points[1][0]]),
-        np.average([back_points[0][1], back_points[1][1]]),
-    ]).astype(int)
+    p_short_line_middle = np.array(
+        [
+            np.average([back_points[0][0], back_points[1][0]]),
+            np.average([back_points[0][1], back_points[1][1]]),
+        ]
+    ).astype(int)
 
-    theta = np.arctan2(p_front[1] - p_short_line_middle[1], p_front[0] - p_short_line_middle[0]) * (180.0 / np.pi)
+    theta = np.arctan2(p_front[1] - p_short_line_middle[1], p_front[0] - p_short_line_middle[0]) * (
+        180.0 / np.pi
+    )
 
     return theta, p_front, p_short_line_middle
 
 
-def find_swarm_position(f):
+def find_swarm_position(f, swarm):
+    """
+    Check for all bot colors
+
+    """
     frame = f.copy()
     swarm_position = []
 
     # Debug values
     ret = 0
-    contours_to_draw = []
-    points_to_draw = []
+    if debug:
+        contours_to_draw = []
+        points_to_draw = []
+        debug_mask = np.zeros(shape=(frame.shape[0], frame.shape[1]), dtype=np.uint8)
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    lower_mask = cv2.inRange(hsv, red_min_hsv_1, red_max_hsv_1)
-    upper_mask = cv2.inRange(hsv, red_min_hsv_2, red_max_hsv_2)
-    full_mask = lower_mask + upper_mask
+    for bot in swarm:
+        if bot in bot_color_ranges:
+            ranges = bot_color_ranges[bot]
+            
+            full_mask = np.zeros(shape=(hsv.shape[0], hsv.shape[1]), dtype=np.uint8)
+            for range in ranges:
+                full_mask += cv2.inRange(hsv, range[0], range[1])
 
-    se1 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(5, 5))
-    se2 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(3, 3))
+            se1 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(5, 5))
+            se2 = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(3, 3))
 
-    # Erosion followed by dilation, for rremoving noise
-    full_mask = cv2.morphologyEx(full_mask, cv2.MORPH_OPEN, se1)
+            # Erosion followed by dilation, for rremoving noise
+            full_mask = cv2.morphologyEx(full_mask, cv2.MORPH_OPEN, se1)
 
-    # Dilution followed by erosion, which fills in black gaps.
-    full_mask = cv2.morphologyEx(full_mask, cv2.MORPH_CLOSE, se2)
+            # Dilution followed by erosion, which fills in black gaps.
+            full_mask = cv2.morphologyEx(full_mask, cv2.MORPH_CLOSE, se2)
 
-    # Find contours
-    contours, _ = cv2.findContours(full_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if len(contours) >= 1:
-        c = contours[0]
+            if debug: 
+                debug_mask += full_mask
 
-        # Choose contour with area closest to calibrated area
-        bot_candidate = find_contour_with_most_similar_area(contours)
+            # Find contours
+            contours, _ = cv2.findContours(full_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if len(contours) >= 1:
+                c = contours[0]
 
-        if bot_candidate is not None:
+                # Choose contour with area closest to calibrated area
+                # TODO: Add back in area check when they have the same area
+                # bot_candidate = find_contour_with_most_similar_area(contours)
+                bot_candidate = c
+                if bot_candidate is not None:
 
-            # Approximate the contour
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.1 * peri, True)
+                    # Approximate the contour
+                    peri = cv2.arcLength(c, True)
+                    approx = cv2.approxPolyDP(c, 0.1 * peri, True)
 
-            if is_triangle(approx):
-                c = approx
-                
-                # Find position of bot center
-                M = cv2.moments(c)
-                c_x = int(M["m10"] / M["m00"])
-                c_y = int(M["m01"] / M["m00"])
-                
-                # Find orientation relative to top left of field (0,0)
-                theta, p_front, p_short_line_middle = find_contour_orientation(c)
+                    if is_triangle(approx):
+                        c = approx
 
-                swarm_position.append([c_x, c_y, theta])
-                ret = 1
-                if debug:
-                    contours_to_draw.append(c)
-                    points_to_draw.append(p_front)
-                    points_to_draw.append(p_short_line_middle)
-                    points_to_draw.append([c_x, c_y])
-                
+                        # Find position of bot center
+                        M = cv2.moments(c)
+                        c_x = int(M["m10"] / M["m00"])
+                        c_y = int(M["m01"] / M["m00"])
+
+                        # Find orientation relative to top left of field (0,0)
+                        theta, p_front, p_short_line_middle = find_contour_orientation(c)
+
+                        swarm_position.append([c_x, c_y, theta])
+                        ret = 1
+                        if debug:
+                            contours_to_draw.append(c)
+                            points_to_draw.append(p_front)
+                            points_to_draw.append(p_short_line_middle)
+                            points_to_draw.append([c_x, c_y])
 
     if debug:
-        full_mask_bgr = cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)
+        debug_mask_bgr = cv2.cvtColor(debug_mask, cv2.COLOR_GRAY2BGR)
 
         if ret:
             for c in contours_to_draw:
-                cv2.drawContours(full_mask_bgr, [c], 0, (0, 255, 0), 3)
+                cv2.drawContours(debug_mask_bgr, [c], 0, (0, 255, 0), 3)
             for p in points_to_draw:
-                cv2.circle(full_mask_bgr, p, 4, (0, 0, 255), -1)
+                cv2.circle(debug_mask_bgr, p, 4, (0, 0, 255), -1)
 
-        cv2.imshow("Swarm Detection", np.hstack([frame, hsv, full_mask_bgr]))
+        cv2.imshow("Swarm Detection", np.hstack([frame, hsv, debug_mask_bgr]))
         cv2.waitKey(1)
 
     return swarm_position
@@ -386,10 +398,10 @@ def main():
             # Create empty occupancy grid
             occupancy_grid = np.zeros(shape=(field.shape[0], field.shape[1]), dtype=np.uint8)
 
-            swarm_position = find_swarm_position(field)
+            swarm_position = find_swarm_position(field, swarm=["green", "red"])
 
-            obstacles, obstacle_mask_viz = find_obstacles(field)
-            occupancy_grid = add_obstacles_to_occupancy_grid(occupancy_grid, obstacles)
+            # obstacles, obstacle_mask_viz = find_obstacles(field)
+            # occupancy_grid = add_obstacles_to_occupancy_grid(occupancy_grid, obstacles)
 
             # return occupancy_grid
 
