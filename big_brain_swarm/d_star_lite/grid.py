@@ -36,7 +36,7 @@ class GridWorld(Graph):
     def printGrid(self):
         print('** GridWorld **')
         for row in self.cells:
-            print(row)
+            print(row) 
 
     def printGValues(self):
         for j in range(self.y_dim):
@@ -71,13 +71,16 @@ class GridWorld(Graph):
                     node.children['x' + str(i) + 'y' + str(j + 1)] = edge
                 self.graph['x' + str(i) + 'y' + str(j)] = node
 
-    def removeRobotObstacle(self, robot):
-        for y in range(robot.y_min, robot.y_max):
-            self.cells[y, np.arange(robot.x_min, robot.x_max)] = 0
-        
-        pass
+    def update_graph(self, grid):
+        self.cells = grid
 
-    def addRobotObstacle(self, robot):
-        for y in range(robot.y_min, robot.y_max):
-            self.cells[y, np.arange(robot.x_min, robot.x_max)] = -1
-        pass                
+    # def removeRobotObstacle(self, robot):
+    #     for y in range(robot.y_min, robot.y_max):
+    #         self.cells[y, np.arange(robot.x_min, robot.x_max)] = 0
+        
+    #     pass
+
+    # def addRobotObstacle(self, robot):
+    #     for y in range(robot.y_min, robot.y_max):
+    #         self.cells[y, np.arange(robot.x_min, robot.x_max)] = -1
+    #     pass                

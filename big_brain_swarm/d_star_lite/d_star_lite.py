@@ -65,6 +65,7 @@ def computeShortestPath(graph, queue, s_start, k_m):
 def nextInShortestPath(graph, s_current):
     min_rhs = float('inf')
     s_next = None
+    # import pdb;pdb.set_trace()
     if graph.graph[s_current].rhs == float('inf'):
         print('You are done stuck')
     else:
@@ -129,6 +130,7 @@ def moveAndRescan(graph, queue, s_current, scan_range, k_m):
     if(s_current == graph.goal):
         return 'goal', k_m
     else:
+        # import pdb;pdb.set_trace()
         s_last = s_current
         s_new = nextInShortestPath(graph, s_current)
         new_coords = stateNameToCoords(s_new)

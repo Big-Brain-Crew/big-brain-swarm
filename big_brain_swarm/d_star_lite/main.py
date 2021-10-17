@@ -1,10 +1,10 @@
 import heapq
 import pygame
 
-from graph import Node, Graph
-from grid import GridWorld
-from utils import stateNameToCoords
-from d_star_lite import initDStarLite, moveAndRescan
+from big_brain_swarm.d_star_lite.graph import Node, Graph
+from big_brain_swarm.d_star_lite.grid import GridWorld
+from big_brain_swarm.d_star_lite.utils import stateNameToCoords
+from big_brain_swarm.d_star_lite.d_star_lite import initDStarLite, moveAndRescan
 
 # Define some colors
 BLACK = (0, 0, 0)
